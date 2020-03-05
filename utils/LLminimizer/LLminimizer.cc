@@ -2,15 +2,16 @@
 #include "LLminimizer.h"
  
 //  constructor
-LLminimizer::LLminimizer(int events_num, double *mcp1_ampl,double *mcp2_ampl,double *dt_ecal_mcp1,double* dt_ecal_mcp2,double *dt_mcp2_mcp1, double *energy, TString crystal, int print_level):
+LLminimizer::LLminimizer(int events_num, float* mcp1_ampl, float* mcp2_ampl, double* dt_ecal_mcp1, double *dt_ecal_mcp2, float* dt_mcp2_mcp1, double* weights, float* energy, double t_unit, TString crystal, int print_level):
     minuit_print_level_(print_level)
 {
-    SetData(events_num,mcp1_ampl,mcp2_ampl,dt_ecal_mcp1,dt_ecal_mcp2,dt_mcp2_mcp1,energy);
+    t_unit_ = t_unit;
+    SetData(events_num,mcp1_ampl,mcp2_ampl,dt_ecal_mcp1,dt_ecal_mcp2,dt_mcp2_mcp1,weights,energy);
     SetCrystal(crystal);
 }
  
 // member functions
-void LLminimizer::SetData(int events_num, double *mcp1_ampl,double *mcp2_ampl,double *dt_ecal_mcp1,double *dt_ecal_mcp2,double *dt_mcp2_mcp1,double *energy)
+void LLminimizer::SetData(int events_num, float* mcp1_ampl, float* mcp2_ampl, double* dt_ecal_mcp1, double* dt_ecal_mcp2, float* dt_mcp2_mcp1, double* weights, float* energy)
 {
     m_mcp1_ampl_.assign(mcp1_ampl,mcp1_ampl+events_num);    
     m_mcp2_ampl_.assign(mcp2_ampl,mcp2_ampl+events_num);    
@@ -18,6 +19,7 @@ void LLminimizer::SetData(int events_num, double *mcp1_ampl,double *mcp2_ampl,do
     m_dt_ecal_mcp2_.assign(dt_ecal_mcp2,dt_ecal_mcp2+events_num);    
     m_dt_mcp2_mcp1_.assign(dt_mcp2_mcp1,dt_mcp2_mcp1+events_num);    
     m_data_size_ = events_num;
+    m_weights_.assign(energy,energy+events_num);
     m_energy_.assign(energy,energy+events_num);    
 
 
@@ -58,15 +60,13 @@ double LLminimizer::NegLogLikelihood(const double* par)
         double sigma2_mcp2_mcp1 = pow(a2/m_mcp2_ampl_[iSample], 2) + pow(b2, 2) + 
                                   pow(a1/m_mcp1_ampl_[iSample], 2) + pow(b1, 2) ;       
         
-        auto prob_ecal_mcp1 = ROOT::Math::crystalball_pdf(m_dt_ecal_mcp1_[iSample], 
-                                                          alpha_cb1, n_cb1,
+        auto prob_ecal_mcp1 = ROOT::Math::gaussian_pdf(m_dt_ecal_mcp1_[iSample]*t_unit_, 
                                                           sqrt(sigma2_ecal_mcp1),
                                                           alpha);
-        auto prob_ecal_mcp2 = ROOT::Math::crystalball_pdf(m_dt_ecal_mcp2_[iSample], 
-                                                          alpha_cb2, n_cb2,
+        auto prob_ecal_mcp2 = ROOT::Math::gaussian_pdf(m_dt_ecal_mcp2_[iSample]*t_unit_, 
                                                           sqrt(sigma2_ecal_mcp2),
                                                           beta);
-        auto prob_mcp2_mcp1 = ROOT::Math::gaussian_pdf(m_dt_mcp2_mcp1_[iSample],
+        auto prob_mcp2_mcp1 = ROOT::Math::gaussian_pdf(m_dt_mcp2_mcp1_[iSample]*t_unit_,
                                                        sqrt(sigma2_mcp2_mcp1),
                                                        gamma);
 
@@ -81,36 +81,34 @@ double LLminimizer::NegLogLikelihood(const double* par)
         //                                               sqrt(sigma2_ecal_mcp2),
         //                                               beta);
         
-        nll += log(prob_ecal_mcp1 * prob_ecal_mcp2 * prob_mcp2_mcp1);            
+        nll += log(prob_ecal_mcp1) + log(prob_ecal_mcp2) + log(prob_mcp2_mcp1);            
     }
-
-    m_nll_.push_back(nll);
-
+    
     return -nll;
 }
 
 
-int LLminimizer::MinimizeNLL()
+int LLminimizer::MinimizeNLL(float tolerance, int minuit_print_level)
 {
 
             ROOT::Math::Functor chi2(this, &LLminimizer::NegLogLikelihood, 12);
             ROOT::Math::Minimizer* minimizer = ROOT::Math::Factory::CreateMinimizer("Minuit2", "Migrad");
             minimizer->SetMaxFunctionCalls(100000);
             minimizer->SetMaxIterations(1000);
-            minimizer->SetTolerance(1.);
-            minimizer->SetPrintLevel(minuit_print_level_);
+            minimizer->SetTolerance(tolerance);
+            minimizer->SetPrintLevel(minuit_print_level);
             minimizer->SetFunction(chi2);
     
-            minimizer->SetLimitedVariable(0, "Cm",25.,1.,5,50. );
-            minimizer->SetLimitedVariable(1, "a1",800.,1,200.,2000 );
-            minimizer->SetLimitedVariable(2, "b1",10.,1.,1.,20 );
-            minimizer->SetLimitedVariable(3, "a2",800.,1,200.,2000 );
-            minimizer->SetLimitedVariable(4, "b2",10.,1.,1.,20 );
-            minimizer->SetLimitedVariable(5, "alpha",2500.,1.,2300.,2700. );
-            minimizer->SetLimitedVariable(6, "beta",1226.,1.,900.,1300. );
-            minimizer->SetLimitedVariable(7, "gamma",-4895.,1.,-5000.,-4000. ); 
-            minimizer->SetLimitedVariable(8, "alpha_cb1",3,1.,0,10 );
-            minimizer->SetLimitedVariable(9, "alpha_cb2",3,1.,0,10 );
+            minimizer->SetLimitedVariable(0, "Cm",30.,1.,10.,70. );
+            minimizer->SetLimitedVariable(1, "a1",600.,1,200.,1500 );
+            minimizer->SetLimitedVariable(2, "b1",15.,1.,10.,20 );
+            minimizer->SetLimitedVariable(3, "a2",600.,1,200.,1500 );
+            minimizer->SetLimitedVariable(4, "b2",15.,1.,10.,20 );
+            minimizer->SetLimitedVariable(5, "alpha",2500.,1.,2300.,2800. );
+            minimizer->SetLimitedVariable(6, "beta",1200.,1.,1100.,1300. );
+            minimizer->SetLimitedVariable(7, "gamma",4895.,1.,4000.,5000. ); 
+            minimizer->SetLimitedVariable(8, "alpha_cb1",1,0.1,0,10 );
+            minimizer->SetLimitedVariable(9, "alpha_cb2",1,0.1,0,10 );
             //minimizer->SetLimitedVariable(10, "alpha_cb3",10,1.,0,100);
             minimizer->SetLimitedVariable(10, "n_1",10,0.1,1.,100 );
             minimizer->SetLimitedVariable(11, "n_2",10,0.1,1.,100 );    
@@ -169,12 +167,12 @@ double LLminimizer::NegLogLikelihoodSimultaneous(const double* par)
     for(int iSample=0; iSample<m_data_size_; ++iSample)
     {   
         int par_num = 12;
-        if (m_energy_[iSample]==100) par_num=12;
-        if (m_energy_[iSample]==150) par_num=15;       
-        if (m_energy_[iSample]==200) par_num=18;
-        if (m_energy_[iSample]==250) par_num=21;
+        if (m_energy_[iSample]==100.) par_num=12;
+        if (m_energy_[iSample]==150.) par_num=15;       
+        if (m_energy_[iSample]==200.) par_num=18;
+        if (m_energy_[iSample]==250.) par_num=21;
            
-        if (m_energy_[iSample]!=50){
+        if (m_energy_[iSample]!=50.){
             Cm = par[par_num];
             alpha = par[par_num+1];
             beta = par[par_num+2];        
@@ -194,12 +192,12 @@ double LLminimizer::NegLogLikelihoodSimultaneous(const double* par)
         }          
         */
          par_num = 24;
-        if (m_energy_[iSample]==100) par_num=24;
-        if (m_energy_[iSample]==150) par_num=26;       
-        if (m_energy_[iSample]==200) par_num=28;
-        if (m_energy_[iSample]==250) par_num=30;
+        if (m_energy_[iSample]==100.) par_num=24;
+        if (m_energy_[iSample]==150.) par_num=26;       
+        if (m_energy_[iSample]==200.) par_num=28;
+        if (m_energy_[iSample]==250.) par_num=30;
            
-        if (m_energy_[iSample]!=50){
+        if (m_energy_[iSample]!=50.){
             alpha_cb1 = par[par_num];
             alpha_cb2 = par[par_num+1];
         //    n_cb1 = par[par_num+2];
@@ -212,80 +210,80 @@ double LLminimizer::NegLogLikelihoodSimultaneous(const double* par)
         double sigma2_mcp2_mcp1 = pow(a2/m_mcp2_ampl_[iSample], 2) + pow(b2, 2) + 
                                   pow(a1/m_mcp1_ampl_[iSample], 2) + pow(b1, 2) ;       
         
-        auto prob_ecal_mcp1 = ROOT::Math::crystalball_pdf(m_dt_ecal_mcp1_[iSample], 
+        auto prob_ecal_mcp1 = ROOT::Math::crystalball_pdf(m_dt_ecal_mcp1_[iSample]*t_unit_, 
                                                           alpha_cb1, n_cb1,
                                                           sqrt(sigma2_ecal_mcp1),
                                                           alpha);
-        auto prob_ecal_mcp2 = ROOT::Math::crystalball_pdf(m_dt_ecal_mcp2_[iSample], 
+        auto prob_ecal_mcp2 = ROOT::Math::crystalball_pdf(m_dt_ecal_mcp2_[iSample]*t_unit_, 
                                                           alpha_cb2, n_cb2,
                                                           sqrt(sigma2_ecal_mcp2),
                                                           beta);
-        auto prob_mcp2_mcp1 = ROOT::Math::gaussian_pdf(m_dt_mcp2_mcp1_[iSample],
+        auto prob_mcp2_mcp1 = ROOT::Math::gaussian_pdf(m_dt_mcp2_mcp1_[iSample]*t_unit_,
                                                        sqrt(sigma2_mcp2_mcp1),
                                                        gamma);
-
-        nll += log(prob_ecal_mcp1 * prob_ecal_mcp2 * prob_mcp2_mcp1);            
+        
+        nll += m_weights_[iSample]*(log(prob_ecal_mcp1) + log(prob_ecal_mcp2) + log(prob_mcp2_mcp1)); 
     }
 
-    m_nll_.push_back(nll);
+    //m_nll_.push_back(nll);
 
     return -nll;
 }
 
 
-int LLminimizer::MinimizeNLLSimultaneous()
+int LLminimizer::MinimizeNLLSimultaneous(float tolerance, int minuit_print_level)
 {
 
             ROOT::Math::Functor chi2(this, &LLminimizer::NegLogLikelihoodSimultaneous, 32);  //24  //40
             ROOT::Math::Minimizer* minimizer = ROOT::Math::Factory::CreateMinimizer("Minuit2", "Migrad");
             minimizer->SetMaxFunctionCalls(100000);
             minimizer->SetMaxIterations(1000);
-            minimizer->SetTolerance(1.);
-            minimizer->SetPrintLevel(minuit_print_level_);
+            minimizer->SetTolerance(tolerance);
+            minimizer->SetPrintLevel(minuit_print_level);
             minimizer->SetFunction(chi2);
     
-            minimizer->SetLimitedVariable(0, "Cm",25.,1.,5,50. );
-            minimizer->SetLimitedVariable(1, "a1",800.,1,200.,2000 );
-            minimizer->SetLimitedVariable(2, "b1",10.,1.,1.,20 );
-            minimizer->SetLimitedVariable(3, "a2",800.,1,200.,2000 );
-            minimizer->SetLimitedVariable(4, "b2",10.,1.,1.,20 );
-            minimizer->SetLimitedVariable(5, "alpha",2500.,1.,2300.,2700. );
-            minimizer->SetLimitedVariable(6, "beta",1226.,1.,900.,1300. );
-            minimizer->SetLimitedVariable(7, "gamma",-4895.,1.,-5000.,-4000. ); 
-            minimizer->SetLimitedVariable(8, "alpha_cb1",3,1.,0,10 );
-            minimizer->SetLimitedVariable(9, "alpha_cb2",3,1.,0,10 );
-            minimizer->SetLimitedVariable(10, "n_cb1",10,0.1,1.,100 );
-            minimizer->SetLimitedVariable(11, "n_cb2",10,0.1,1.,100 );    
-            minimizer->SetLimitedVariable(12, "Cm100",25.,1.,5,50. );
-            minimizer->SetLimitedVariable(13, "alpha100",2500.,1.,2300.,2700. );
-            minimizer->SetLimitedVariable(14, "beta100",1226.,1.,900.,1300. );
-            minimizer->SetLimitedVariable(15, "Cm150",25.,1.,5,50. );
-            minimizer->SetLimitedVariable(16, "alpha150",2500.,1.,2300.,2700. );
-            minimizer->SetLimitedVariable(17, "beta150",1226.,1.,900.,1300. );
-            minimizer->SetLimitedVariable(18, "Cm200",25.,1.,5,50. );
-            minimizer->SetLimitedVariable(19, "alpha200",2500.,1.,2300.,2700. );
-            minimizer->SetLimitedVariable(20, "beta200",1226.,1.,900.,1300. );
-            minimizer->SetLimitedVariable(21, "Cm250",25.,1.,5,50. );
-            minimizer->SetLimitedVariable(22, "alpha250",2500.,1.,2300.,2700. );
-            minimizer->SetLimitedVariable(23, "beta250",1226.,1.,900.,1300. );  
+            minimizer->SetLimitedVariable(0, "Cm50",50.,1.,15,70. );
+            minimizer->SetLimitedVariable(1, "a1",600.,1,300.,2000 );
+            minimizer->SetLimitedVariable(2, "b1",10.,1.,5.,20 );
+            minimizer->SetLimitedVariable(3, "a2",800.,1,300.,2000 );
+            minimizer->SetLimitedVariable(4, "b2",10.,1.,5.,20 );
+            minimizer->SetLimitedVariable(5, "alpha50",2600.,1.,2500.,2700. );
+            minimizer->SetLimitedVariable(6, "beta50",1226.,1.,1200.,1300. );
+            minimizer->SetLimitedVariable(7, "gamma",4895.,1.,4000.,5000. ); 
+            minimizer->SetLimitedVariable(8, "alpha_cb1_50",1,0.1,0,10 );
+            minimizer->SetLimitedVariable(9, "alpha_cb2_50",1,0.1,0,10 );
+            minimizer->SetLimitedVariable(10, "n_cb1",10,0.1,1,100 );
+            minimizer->SetLimitedVariable(11, "n_cb2",10,0.1,1,100 );    
+            minimizer->SetLimitedVariable(12, "Cm100",40.,1.,15,70. );
+            minimizer->SetLimitedVariable(13, "alpha100",2500.,1.,2400.,2600. );
+            minimizer->SetLimitedVariable(14, "beta100",1226.,1.,1100.,1300. );
+            minimizer->SetLimitedVariable(15, "Cm150",30.,1.,15,60. );
+            minimizer->SetLimitedVariable(16, "alpha150",2500.,1.,2400.,2600. );
+            minimizer->SetLimitedVariable(17, "beta150",1226.,1.,1100.,1300. );
+            minimizer->SetLimitedVariable(18, "Cm200",25.,1.,15,60. );
+            minimizer->SetLimitedVariable(19, "alpha200",2500.,1.,2400.,2600. );
+            minimizer->SetLimitedVariable(20, "beta200",1226.,1.,1100.,1300. );
+            minimizer->SetLimitedVariable(21, "Cm250",25.,1.,15,60. );
+            minimizer->SetLimitedVariable(22, "alpha250",2500.,1.,2400.,2600. );
+            minimizer->SetLimitedVariable(23, "beta250",1226.,1.,1100.,1300. );  
     
-            minimizer->SetLimitedVariable(24, "alpha_cb1_100",3,1.,0,10 );
-            minimizer->SetLimitedVariable(25, "alpha_cb2_100",3,1.,0,10 );
+            minimizer->SetLimitedVariable(24, "alpha_cb1_100",1, 0.1,0,10 );
+            minimizer->SetLimitedVariable(25, "alpha_cb2_100",1, 0.1,0,10 );
          //   minimizer->SetLimitedVariable(26, "n_cb1_100",10,0.1,1.,100 );
         //    minimizer->SetLimitedVariable(27, "n_cb2_100",10,0.1,1.,100 );
     
-            minimizer->SetLimitedVariable(28, "alpha_cb1_150",3,1.,0,10 );
-            minimizer->SetLimitedVariable(29, "alpha_cb2_150",3,1.,0,10 );
+            minimizer->SetLimitedVariable(26, "alpha_cb1_150",1, 0.1,0,10 );
+            minimizer->SetLimitedVariable(27, "alpha_cb2_150",1, 0.1,0,10 );
           //  minimizer->SetLimitedVariable(30, "n_cb1_150",10,0.1,1.,100 );
           //  minimizer->SetLimitedVariable(31, "n_cb2_150",10,0.1,1.,100 );
     
-            minimizer->SetLimitedVariable(32, "alpha_cb1_200",3,1.,0,10 );
-            minimizer->SetLimitedVariable(33, "alpha_cb2_200",3,1.,0,10 );
+            minimizer->SetLimitedVariable(28, "alpha_cb1_200",1, 0.1,0,10 );
+            minimizer->SetLimitedVariable(29, "alpha_cb2_200",1, 0.1,0,10 );
        //     minimizer->SetLimitedVariable(34, "n_cb1_200",10,0.1,1.,100 );
          //   minimizer->SetLimitedVariable(35, "n_cb2_200",10,0.1,1.,100 );
     
-            minimizer->SetLimitedVariable(36, "alpha_cb1_250",3,1.,0,10 );
-            minimizer->SetLimitedVariable(37, "alpha_cb2_250",3,1.,0,10 );
+            minimizer->SetLimitedVariable(30, "alpha_cb1_250",1, 0.1,0,10 );
+            minimizer->SetLimitedVariable(31, "alpha_cb2_250",1, 0.1,0,10 );
          //   minimizer->SetLimitedVariable(38, "n_cb1_250",10,0.1,1.,100 );
          //   minimizer->SetLimitedVariable(39, "n_cb2_250",10,0.1,1.,100 );
     
@@ -342,34 +340,6 @@ int LLminimizer::MinimizeNLLSimultaneous()
     
             m_n_cb1_.push_back(minimizer->X()[10]);
             m_n_cb2_.push_back(minimizer->X()[11]);
-
-
-    /*
-            m_alpha_cb1_.push_back(minimizer->X()[8]);
-            m_alpha_cb1_.push_back(minimizer->X()[24]);
-            m_alpha_cb1_.push_back(minimizer->X()[28]);
-            m_alpha_cb1_.push_back(minimizer->X()[32]);
-            m_alpha_cb1_.push_back(minimizer->X()[36]);
-
-            m_alpha_cb2_.push_back(minimizer->X()[9]);
-            m_alpha_cb2_.push_back(minimizer->X()[25]);
-            m_alpha_cb2_.push_back(minimizer->X()[29]);
-            m_alpha_cb2_.push_back(minimizer->X()[33]);
-            m_alpha_cb2_.push_back(minimizer->X()[37]);
-
-            m_n_cb1_.push_back(minimizer->X()[10]);
-            m_n_cb1_.push_back(minimizer->X()[26]);
-            m_n_cb1_.push_back(minimizer->X()[30]);
-            m_n_cb1_.push_back(minimizer->X()[34]);
-            m_n_cb1_.push_back(minimizer->X()[38]);
-    
-            m_n_cb2_.push_back(minimizer->X()[11]);
-            m_n_cb2_.push_back(minimizer->X()[27]);
-            m_n_cb2_.push_back(minimizer->X()[31]);
-            m_n_cb2_.push_back(minimizer->X()[35]);
-            m_n_cb2_.push_back(minimizer->X()[39]);
-            */
-    
             m_alpha_cb1_e_.push_back(minimizer->Errors()[8]);
             m_alpha_cb2_e_.push_back(minimizer->Errors()[9]);     
     
